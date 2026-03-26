@@ -2,6 +2,8 @@
 
 # 팀명 - C.O.R.E  
 
+<img width="512" height="512" alt="hospital" src="https://github.com/user-attachments/assets/23d991e9-648d-4a4e-91ea-785a2cd105d3" />
+
 팀장 - 20216736 염종환  
 
 팀원 - 20213222 박수민  
