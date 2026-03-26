@@ -2,7 +2,7 @@
 
 # 팀명 - C.O.R.E  
 
-<img width="256" height="256" alt="hospital" src="https://github.com/user-attachments/assets/23d991e9-648d-4a4e-91ea-785a2cd105d3" />
+<img width="128" height="128" alt="hospital" src="https://github.com/user-attachments/assets/23d991e9-648d-4a4e-91ea-785a2cd105d3" />
 
 팀장 - 20216736 염종환  
 
