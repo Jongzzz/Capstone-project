@@ -105,7 +105,8 @@ function App() {
     e.preventDefault();
     setLoading(true);
     try {
-      const response = await axios.post('http://127.0.0.1:8000/api/triage/predict', formData);
+      // 💡 여기서 로컬 주소 대신 종환님의 Render 백엔드 주소로 데이터를 보냅니다!
+      const response = await axios.post('https://c-o-r-e.onrender.com/api/triage/predict', formData);
       const newResult = response.data.data;
 
       const newPatientRecord = {
@@ -119,7 +120,10 @@ function App() {
       setPatientHistory(updatedHistory);
       localStorage.setItem('coreTriageHistory', JSON.stringify(updatedHistory));
       setSelectedPatient(newPatientRecord);
-    } catch (error) { alert("백엔드 서버와 연결할 수 없습니다."); }
+    } catch (error) { 
+      alert("백엔드 서버와 연결할 수 없습니다. 서버가 켜져 있는지 확인해주세요."); 
+      console.error(error); // 에러 원인을 개발자 도구에서 볼 수 있도록 추가했습니다.
+    }
     setLoading(false);
   };
 
