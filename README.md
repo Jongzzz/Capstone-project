@@ -1,6 +1,6 @@
 # Capstone-project
 
-팀명 C.O.R.E  
+# 팀명 - C.O.R.E  
 
 팀장 - 20216736 염종환  
 
