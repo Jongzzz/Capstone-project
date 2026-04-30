@@ -105,15 +105,18 @@ function App() {
     e.preventDefault();
     setLoading(true);
     try {
-      // 💡 여기서 로컬 주소 대신 종환님의 Render 백엔드 주소로 데이터를 보냅니다!
+      // 💡 로컬 주소 대신 종환님의 Render 백엔드 주소로 데이터를 보냅니다!
       const response = await axios.post('https://c-o-r-e.onrender.com/api/triage/predict', formData);
       const newResult = response.data.data;
 
+      // ✅ 제미나이 브리핑(ai_briefing)이 추가되었습니다.
       const newPatientRecord = {
         id: newResult.patient_id, name: newResult.patient_name, cc: formData.chief_complaint,
         age: formData.age, spo2: formData.o2sat, sbp: formData.sbp,
         level: newResult.predicted_level, score: newResult.risk_score, time: newResult.timestamp,
-        warnings: newResult.warnings, xai_data: newResult.xai_data, isActive: true
+        warnings: newResult.warnings, xai_data: newResult.xai_data, 
+        ai_briefing: newResult.ai_briefing, // 👈 추가된 부분
+        isActive: true
       };
       
       const updatedHistory = [newPatientRecord, ...patientHistory];
@@ -122,7 +125,7 @@ function App() {
       setSelectedPatient(newPatientRecord);
     } catch (error) { 
       alert("백엔드 서버와 연결할 수 없습니다. 서버가 켜져 있는지 확인해주세요."); 
-      console.error(error); // 에러 원인을 개발자 도구에서 볼 수 있도록 추가했습니다.
+      console.error(error); 
     }
     setLoading(false);
   };
@@ -325,11 +328,11 @@ function App() {
               </div>
             </div>
 
-            {/* [3컬럼] XAI 리포트 및 자연어 소견 텍스트 */}
+            {/* [3컬럼] AI 브리핑 및 XAI 리포트 (Fairness 제거됨) */}
             <div className="analytics-column">
-              <div className="dashboard-card xai-card" style={{display: 'flex', flexDirection: 'column'}}>
+              <div className="dashboard-card xai-card" style={{display: 'flex', flexDirection: 'column', height: '100%'}}>
                 <div className="card-title-group" style={{marginBottom: '10px', paddingBottom: '5px'}}>
-                  <div className="card-title">🦾 임상 판단 근거 (XAI)</div>
+                  <div className="card-title">🦾 AI 임상 판단 및 소견</div>
                 </div>
                 
                 {selectedPatient ? (
@@ -337,8 +340,16 @@ function App() {
                     <div style={{fontSize: '0.85rem', color: '#1E293B', fontWeight: 600, marginBottom: '10px'}}>
                       선택된 환자: {maskName(selectedPatient.name)} (ID.{selectedPatient.id})
                     </div>
+
+                    {/* 🤖 1. 제미나이 자연어 브리핑 영역 (필수!) */}
+                    <div style={{ backgroundColor: '#F0F9FF', border: '1px solid #BAE6FD', padding: '15px', borderRadius: '10px', marginBottom: '15px' }}>
+                        <div style={{ fontSize: '0.8rem', color: '#0369A1', fontWeight: 800, marginBottom: '5px' }}>👨‍⚕️ AI 비서 종합 소견:</div>
+                        <div style={{ fontSize: '0.95rem', color: '#0C4A6E', lineHeight: '1.6', fontWeight: 600 }}>
+                            {selectedPatient.ai_briefing || "브리핑을 생성하는 중입니다..."}
+                        </div>
+                    </div>
                     
-                    {/* 💡 핵심: height={160} 으로 고정하여 그래프 렌더링 버그 완벽 차단! */}
+                    {/* 📊 2. XAI 그래프 영역 */}
                     {selectedPatient.xai_data ? (
                       <div className="chart-container" style={{flex: 1, minHeight: '140px'}}>
                         <ResponsiveContainer width="100%" height={160}>
@@ -357,10 +368,10 @@ function App() {
                       </div>
                     ) : (<div style={{margin:'auto', color:'#94A3B8', fontSize:'0.8rem'}}>XAI 데이터 없음</div>)}
 
-                    {/* Rule-based NLG 텍스트 소견 */}
+                    {/* 🚨 3. Rule-based 경고 영역 */}
                     {selectedPatient.warnings && selectedPatient.warnings.length > 0 && (
                       <div style={{ marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto', maxHeight: '130px', paddingRight: '5px' }}>
-                        <div style={{fontSize: '0.75rem', color: '#64748B', fontWeight: 700}}>상세 임상 소견:</div>
+                        <div style={{fontSize: '0.75rem', color: '#64748B', fontWeight: 700}}>추가 감지 알림:</div>
                         {selectedPatient.warnings.map((warn, index) => (
                           <div key={index} className="warning-item" style={{ padding: '8px 12px', margin: 0, display: 'flex', alignItems: 'flex-start', gap: '8px', backgroundColor: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '6px' }}>
                             <span style={{fontSize:'1rem', lineHeight: '1.2'}}>🚨</span>
@@ -376,23 +387,7 @@ function App() {
                   </div>
                 )}
               </div>
-
-              <div className="dashboard-card fairness-card">
-                <div className="card-title-group" style={{marginBottom: '10px', paddingBottom: '5px'}}><div className="card-title">🛡️ Fairness Audit</div></div>
-                <div className="fairness-metrics-grid">
-                  <div className="fairness-score-card">
-                    <p style={{fontSize:'0.7rem', color:'#64748B'}}>연령 대기격차</p>
-                    <p className="fairness-value" style={{color: '#EA580C'}}>+12분</p>
-                  </div>
-                  <div className="fairness-score-card">
-                    <p style={{fontSize:'0.7rem', color:'#64748B'}}>성별 편향도</p>
-                    <p className="fairness-value" style={{color: '#16A34A'}}>0.91</p>
-                  </div>
-                </div>
-                <p style={{fontSize: '0.75rem', color: '#991B1B', marginTop: '10px', backgroundColor: '#FEF2F2', padding: '8px', borderRadius: '4px'}}>
-                  [Flagged] 노년층 대기 시간이 유의미하게 높음
-                </p>
-              </div>
+              {/* Fairness Audit 영역은 완전히 제거되었습니다! */}
             </div>
           </div>
         )}
@@ -442,4 +437,4 @@ function App() {
   )
 }
 
-export default App
+export default App;
