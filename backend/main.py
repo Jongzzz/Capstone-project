@@ -27,7 +27,7 @@ print("="*50)
 ai_model = None
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+    ai_model = genai.GenerativeModel('gemini-2.5-flash')
 
 app = FastAPI(title="CDSS Triage API", description="룰베이스 경고 + Gemini AI 비서 브리핑 통합 백엔드")
 
