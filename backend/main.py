@@ -8,6 +8,7 @@ import pandas as pd
 import joblib
 import google.generativeai as genai
 import os
+import threading # 👈 추가된 핵심 무기!
 from dotenv import load_dotenv
 from datetime import datetime
 
@@ -41,34 +42,38 @@ class CustomModel(nn.Module):
         return self.network(x)
 
 # ==========================================
-# 🌟 [핵심 해결책] Render 타임아웃 방지 로직 🌟
-# 전역 변수로 껍데기만 먼저 만들어 둡니다.
+# 🌟 [최종 병기] 쓰레드를 이용한 백그라운드 로딩 🌟
 # ==========================================
 device = torch.device("cpu")
 pytorch_model = None
 preprocessor = None
 
-@app.on_event("startup")
-async def load_heavy_models():
-    """서버 문(포트)을 먼저 열고 나서 무거운 파일들을 백그라운드로 로딩합니다."""
+def load_heavy_models_in_background():
+    """메인 서버를 멈추지 않고 뒤에서 조용히 무거운 파일을 올립니다."""
     global pytorch_model, preprocessor
-    print("🚪 1단계: 서버 포트 연결 성공! (Render가 안심함)")
-    print("🧠 2단계: 무거운 AI 모델과 150MB 파일 로딩을 시작합니다...")
+    print("🧠 2단계: 무거운 파일 로딩 시작 (백그라운드 진행 중...)")
     
     pytorch_model = CustomModel(input_dim=27, output_dim=5)
     try:
         state_dict = torch.load('CORE_6.pth', map_location=device)
         pytorch_model.load_state_dict(state_dict)
         pytorch_model.eval()
-        print("✅ AI 모델(CORE_6.pth) 로드 완료!")
+        print("✅ PyTorch 모델 로드 완료!")
     except Exception as e:
-        print(f"❌ 모델 로드 실패: {e}")
+        print(f"❌ PyTorch 로드 실패: {e}")
 
     try:
         preprocessor = joblib.load('best_xgboost_model.pkl') 
-        print("✅ 전처리기(150MB pkl) 로드 완료!")
+        print("✅ XGBoost 전처리기(150MB) 로드 완료!")
     except Exception as e:
-        print(f"⚠️ pkl 로드 실패: {e}")
+        print(f"⚠️ XGBoost 로드 실패: {e}")
+
+@app.on_event("startup")
+async def startup_event():
+    print("🚪 1단계: 서버 문 즉시 개방! (Render 타임아웃 원천 차단)")
+    # 별도의 작업자(Thread)를 시켜서 로딩을 시작하고, 서버 문은 바로 열어버립니다.
+    thread = threading.Thread(target=load_heavy_models_in_background)
+    thread.start()
 
 # ==========================================
 
@@ -107,9 +112,9 @@ FEATURE_COLUMNS = [
 
 @app.post("/api/triage/predict")
 async def predict_triage(data: TriageInput):
-    # 아직 모델 로딩이 안 끝났는데 프론트에서 요청이 올 경우 방어
+    # 아직 백그라운드 로딩이 안 끝났는데 프론트에서 요청이 올 경우 방어
     if pytorch_model is None or preprocessor is None:
-        return {"status": "error", "message": "AI 모델이 아직 깨어나는 중입니다. 1분 뒤에 다시 시도해주세요."}
+        return {"status": "error", "message": "AI 모델이 뒤에서 아직 로딩 중입니다. 1~2분 뒤에 다시 버튼을 눌러주세요."}
 
     input_dict = {col: 0.0 for col in FEATURE_COLUMNS}
     input_dict['sbp'] = data.sbp
@@ -160,7 +165,7 @@ async def predict_triage(data: TriageInput):
     return {
         "status": "success",
         "data": {
-            "patient_id": str(np.random.randint(1000, 9999)), # 👈 누락되었던 필수 데이터 추가 완료!
+            "patient_id": str(np.random.randint(1000, 9999)),
             "patient_name": data.patient_name,
             "predicted_level": final_level,
             "risk_score": max(1, min(99, risk_score)),
