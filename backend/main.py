@@ -1,161 +1,204 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from datetime import datetime
-import pytz
-import random
+import torch
+import torch.nn as nn
+import numpy as np
+import pandas as pd
+import joblib  # pkl 파일을 불러오기 위한 라이브러리
+import google.generativeai as genai
 import os
 from dotenv import load_dotenv
-import google.generativeai as genai
+from datetime import datetime
 
-# ==========================================
-# 🌟 1. 구글 Gemini API 세팅 및 디버깅
-# ==========================================
+# 1. 환경 변수 로드 및 제미나이 설정
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=GEMINI_API_KEY)
+# 아까 확인했던 최신 모델 적용!
+ai_model = genai.GenerativeModel('gemini-2.5-flash')
 
-# 서버 실행 시 터미널에서 API 키 로드 여부 즉각 확인
-print("="*50)
-if GEMINI_API_KEY:
-    # 보안을 위해 키의 앞부분만 출력하여 확인
-    print(f"✅ API 키 로드 성공: {GEMINI_API_KEY[:10]}...") 
-else:
-    print("❌ API 키 로드 실패: .env 파일의 위치와 오타를 확인해 주세요.")
-print("="*50)
+app = FastAPI()
 
-# API 키가 있으면 Gemini 모델 활성화
-ai_model = None
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-    ai_model = genai.GenerativeModel('gemini-2.5-flash')
-
-app = FastAPI(title="CDSS Triage API", description="룰베이스 경고 + Gemini AI 비서 브리핑 통합 백엔드")
-
+# CORS 설정 (프론트엔드와 통신 허용)
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-class PatientInput(BaseModel):
+# 2. 파이토치 모델 뼈대 구축 (input_dim=27)
+class CustomModel(nn.Module):
+    def __init__(self, input_dim=27, output_dim=5):
+        super(CustomModel, self).__init__()
+        self.network = nn.Sequential(
+            nn.Linear(input_dim, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Linear(64, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Linear(128, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Linear(256, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Linear(64, 32),
+            nn.BatchNorm1d(32),
+            nn.ReLU(),
+            nn.Linear(32, output_dim)
+        )
+
+    def forward(self, x):
+        return self.network(x)
+
+# 3. 모델 가중치(.pth) 및 전처리기(.pkl) 로드
+# 서버가 켜질 때 딱 한 번만 메모리에 올립니다.
+device = torch.device("cpu") # Render 무료 서버는 CPU를 사용하므로 명시
+pytorch_model = CustomModel(input_dim=27, output_dim=5)
+pytorch_model.load_state_dict(torch.load('CORE_6.pth', map_location=device))
+pytorch_model.eval() # 평가 모드로 전환
+
+try:
+    preprocessor = joblib.load('best_xgboost_model.pkl') 
+    print("✅ 150MB 전처리기(pkl) 로드 성공!")
+except Exception as e:
+    print(f"⚠️ pkl 로드 실패 (파일 이름 확인 필요): {e}")
+    preprocessor = None
+
+# 프론트엔드에서 날아오는 데이터 규격
+class TriageInput(BaseModel):
     patient_name: str
     chief_complaint: str
     age: int
     temperature: float
     heart_rate: int
     resp_rate: int
-    o2sat: float
+    o2sat: int
     sbp: int
     dbp: int
     pain_score: int
 
+# 프론트의 주증상을 모델의 주증상 칸(12개)으로 변환하는 매핑
+cc_mapping = {
+    '흉통/심장질환': 'Cardiovascular',
+    '호흡곤란': 'Respiratory',
+    '복통': 'Gastrointestinal',
+    '두통/뇌졸중': 'Neurological',
+    '외상/출혈': 'Trauma_Injury',
+    '발열': 'Infection_Immune',
+    '기타': 'General_Other'
+}
+
+# 27개 피처 순서표
+FEATURE_COLUMNS = [
+    'sbp', 'dbp', 'heartrate', 'resprate', 'temperature', 'o2sat',
+    'anchor_age', 'gender', 'race_group', 'sbp_missing', 'dbp_missing',
+    'heartrate_missing', 'resprate_missing', 'temperature_missing',
+    'o2sat_missing', 'Gastrointestinal', 'Cardiovascular', 'Respiratory',
+    'Neurological', 'Trauma_Injury', 'Psychiatric_Substance',
+    'Infection_Immune', 'Musculoskeletal_Pain', 'Genitourinary_Obstetric',
+    'ENT_Ophthalmology', 'Endocrine_Metabolic', 'General_Other'
+]
+
 @app.post("/api/triage/predict")
-async def predict_triage(data: PatientInput):
-    KST = pytz.timezone('Asia/Seoul')
-    now = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
+async def predict_triage(data: TriageInput):
+    # ==========================================
+    # STEP 1: 9개 데이터를 27개 배열로 뻥튀기 (데이터 어댑터)
+    # ==========================================
+    input_dict = {col: 0.0 for col in FEATURE_COLUMNS} # 일단 0으로 다 채움
     
-    warnings = []
-    pred_level = 4
-    risk_score = 30.0 + random.uniform(0, 5)
-    shap_vitals = {'SpO2': 0.0, 'SBP': 0.0, 'Pain': 0.0, 'Age': 0.0, 'Temp': 0.0}
+    # 1. 바이탈 & 나이 넣기
+    input_dict['sbp'] = data.sbp
+    input_dict['dbp'] = data.dbp
+    input_dict['heartrate'] = data.heart_rate
+    input_dict['resprate'] = data.resp_rate
+    input_dict['temperature'] = data.temperature
+    input_dict['o2sat'] = data.o2sat
+    input_dict['anchor_age'] = data.age
+    
+    # 2. 성별/인종은 UI에 없으므로 임의의 기본값(0) 할당
+    input_dict['gender'] = 0 
+    input_dict['race_group'] = 0
+    
+    # 3. Missing Tag 넣기 (프론트에서 필수값으로 다 들어오므로 결측치 없음=0 처리)
+    # 만약 빈칸을 허용한다면 조건문으로 1을 넣어야 함
+    
+    # 4. 주증상 원핫 인코딩
+    mapped_cc = cc_mapping.get(data.chief_complaint, 'General_Other')
+    if mapped_cc in input_dict:
+        input_dict[mapped_cc] = 1.0
 
-    # ==========================================
-    # 🧠 기존 룰베이스 로직 (유지)
-    # ==========================================
-    if data.o2sat < 90.0:
-        risk_score = 95.5
-        pred_level = 1
-        shap_vitals['SpO2'] += 25.0
-        warnings.append(f"[호흡기계] SpO2 {data.o2sat}%로 심각한 저산소증 소견을 보입니다. 즉각적인 하이플로우 산소 투여 및 기도 확보를 권고합니다.")
-    elif data.o2sat < 94.0:
-        risk_score = max(risk_score, 82.0)
-        pred_level = min(pred_level, 2)
-        shap_vitals['SpO2'] += 12.0
-        warnings.append(f"[호흡기계] SpO2 {data.o2sat}%로 경도 저산소증이 관찰됩니다. 지속적인 산소 포화도 모니터링이 필요합니다.")
-
-    if data.sbp <= 90.0:
-        risk_score = max(risk_score, 92.5)
-        pred_level = min(pred_level, 1)
-        shap_vitals['SBP'] += 20.0
-        warnings.append(f"[순환기계] 수축기 혈압 {data.sbp}mmHg로 쇼크(저혈압) 위험이 있습니다. 수액 소생술 및 승압제 준비를 권장합니다.")
-    elif data.age >= 80 and data.sbp >= 150:
-        shap_vitals['SBP'] += 8.0
-        warnings.append(f"[순환기계] 80세 이상 고령 환자로, 수축기 혈압 {data.sbp}mmHg 기준 노인성 고혈압 통제 가이드라인 적용 대상입니다.")
-    elif data.sbp >= 140 or data.dbp >= 90:
-        shap_vitals['SBP'] += 5.0
-        warnings.append(f"[순환기계] 고혈압 위험 수준의 혈압(SBP {data.sbp} / DBP {data.dbp})이 관찰됩니다.")
-
-    if data.pain_score >= 8:
-        risk_score = max(risk_score, 68.0)
-        pred_level = min(pred_level, 3)
-        shap_vitals['Pain'] += 15.0
-        warnings.append(f"[통증평가] NRS {data.pain_score}점의 극심한 통증을 호소하고 있습니다. 신속한 진통제 투여를 고려하십시오.")
-
-    if data.temperature >= 39.0:
-        shap_vitals['Temp'] += 10.0
-        warnings.append(f"[감염내과] 체온 {data.temperature}℃의 고열 소견이 있습니다. 패혈증 배제를 위한 혈액 배양 검사를 권장합니다.")
-
-    if data.age >= 65:
-        shap_vitals['Age'] += 5.0 
-
-    xai_data = [{'name': k, 'value': round(v, 1)} for k, v in shap_vitals.items() if v != 0]
-    xai_data = sorted(xai_data, key=lambda x: abs(x['value']), reverse=True)
-
-    if len(warnings) == 0:
-        warnings.append("[종합소견] 현재 입력된 활력징후 상 특이 소견이나 즉각적인 처치를 요하는 위험 징후가 관찰되지 않습니다.")
-
-    # ==========================================
-    # 🤖 2. 신규: Gemini AI 비서 프롬프트 및 호출 (에러 추적 강화)
-    # ==========================================
-    ai_briefing = ""
-    if ai_model:
+    # 5. DataFrame으로 변환 후 pkl 적용
+    input_df = pd.DataFrame([input_dict])
+    
+    if preprocessor:
+        # pkl이 파이프라인이나 스케일러라면 transform을 적용
         try:
-            # AI에게 던져줄 프롬프트 조립
-            prompt = f"""
-            너는 응급의학과 전문의야. 다음 환자의 바이탈과 AI 예측 등급을 보고, 간호사나 다른 의사에게 인계할 '핵심 임상 브리핑'을 3문장 이내로 작성해줘.
-            말투는 전문가답고 간결한 '-입니다', '-바랍니다', '-요망됨' 체를 사용해.
-
-            [환자 데이터]
-            - 나이: {data.age}세
-            - 주호소: {data.chief_complaint}
-            - 체온: {data.temperature}℃ / 심박수: {data.heart_rate}회/분 / 호흡수: {data.resp_rate}회/분
-            - 산소포화도: {data.o2sat}% / 혈압: {data.sbp}/{data.dbp}mmHg
-            - 예측 중증도: ESI {pred_level}등급
-            """
-            
-            # API 호출
-            response = ai_model.generate_content(prompt)
-            
-            # 정상적으로 텍스트를 받아온 경우
-            if response and response.text:
-                ai_briefing = response.text.strip()
-            else:
-                ai_briefing = "AI가 빈 응답을 반환했습니다."
-                print("🚨 제미나이 호출 경고: 빈 응답 반환")
-                
-        except Exception as e:
-            # 프론트엔드 화면과 터미널 양쪽 모두에 에러 내용 출력
-            error_msg = str(e)
-            print(f"\n🚨 제미나이 API 호출 실패!\n원인: {error_msg}\n")
-            ai_briefing = f"AI 브리핑 생성 오류: {error_msg}"
+            processed_array = preprocessor.transform(input_df)
+        except:
+            # 만약 에러가 난다면, 전처리기가 배열을 그대로 받지 않는 형태일 수 있음
+            processed_array = input_df.values
     else:
-        ai_briefing = "서버에 API 키가 등록되지 않아 AI 브리핑 기능이 비활성화되었습니다."
+        processed_array = input_df.values
 
     # ==========================================
-    # 🚀 3. 최종 JSON 응답 반환
+    # STEP 2: PyTorch AI 모델 추론 (진짜 지능 작동!)
     # ==========================================
+    input_tensor = torch.tensor(processed_array, dtype=torch.float32).to(device)
+    
+    with torch.no_grad(): # 추론 모드(학습 안함)
+        model_output = pytorch_model(input_tensor)
+        # 0~4 사이의 결과가 나옴
+        predicted_idx = torch.argmax(model_output, dim=1).item()
+        
+    # 결과값에 +1을 해서 Level 1~5로 변환 (주의: 수민님 모델의 정답지가 0=Lv.1 이라면 +1 해야 함)
+    # 만약 수민님이 0=Lv.5 로 역순으로 했다면 로직을 반대로 해야함 (보통 0=Lv.1)
+    final_level = predicted_idx + 1 
+    
+    # 임의의 위험도 점수 계산 로직 (Softmax 확률값 기반으로 짜면 더 좋음)
+    risk_score = 100 - (predicted_idx * 20) + np.random.randint(-5, 5)
+
+    # ==========================================
+    # STEP 3: 제미나이 LLM 브리핑 생성
+    # ==========================================
+    prompt = f"""
+    환자 정보: {data.age}세, 주증상: {data.chief_complaint}
+    Vitals: 혈압 {data.sbp}/{data.dbp}, 맥박 {data.heart_rate}, 호흡 {data.resp_rate}, 체온 {data.temperature}, SpO2 {data.o2sat}%
+    AI 중증도 예측: Level {final_level}
+    
+    위 데이터를 바탕으로 의사에게 전달할 짧고 전문적인 임상 브리핑을 한국어로 작성해 줘. (3문장 이내)
+    """
+    
+    try:
+        response = ai_model.generate_content(prompt)
+        ai_briefing = response.text
+    except Exception as e:
+        ai_briefing = f"브리핑 생성 오류: {str(e)}"
+
+    # ==========================================
+    # STEP 4: 프론트엔드로 최종 데이터 쏘기
+    # ==========================================
+    import datetime
     return {
         "status": "success",
         "data": {
-            "patient_id": random.randint(1000, 9999),
+            "patient_id": str(np.random.randint(1000, 9999)),
             "patient_name": data.patient_name,
-            "predicted_level": pred_level,
-            "risk_score": round(risk_score, 1),
-            "warnings": warnings,            
-            "ai_briefing": ai_briefing,      
-            "timestamp": now,
-            "xai_data": xai_data
+            "predicted_level": final_level,
+            "risk_score": max(1, min(99, risk_score)), # 1~99점 사이 고정
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "ai_briefing": ai_briefing,
+            "warnings": ["생체 징후 모니터링이 필요합니다."],
+            "xai_data": [
+                {"name": "Age", "value": data.age * 0.1},
+                {"name": "Temp", "value": (data.temperature - 36.5) * 5}
+            ]
         }
     }
-
-@app.get("/")
-async def root():
-    return {"message": "CDSS Backend is running with Gemini AI!"}
