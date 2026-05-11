@@ -73,10 +73,20 @@ function App() {
     return saved ? JSON.parse(saved) : [];
   });
 
+  // 🌟 [수정] 백엔드 모델이 기대하는 필드들을 초기값에 포함
   const [formData, setFormData] = useState({
-    patient_name: '', chief_complaint: '흉통/심장질환', age: 70,
-    temperature: 36.5, heart_rate: 80, resp_rate: 20,
-    o2sat: 98, sbp: 120, dbp: 80, pain_score: 0
+    patient_name: '', 
+    chief_complaint: '흉통/심장질환', 
+    age: 70,
+    gender: 1,           // 추가 (1: 남성, 2: 여성)
+    arrival_mode: 1,     // 추가 (1: 구급차, 2: 도보 등)
+    temperature: 36.5, 
+    heart_rate: 80, 
+    resp_rate: 20,
+    o2sat: 98, 
+    sbp: 120, 
+    dbp: 80, 
+    pain_score: 5
   });
 
   const [selectedPatient, setSelectedPatient] = useState(null);
@@ -101,31 +111,58 @@ function App() {
 
   const handleComplaintSelect = (option) => { setFormData({ ...formData, chief_complaint: option }); };
 
+  // 🌟 [핵심 수정] handleSubmit 함수: 백엔드 규격(PatientData)에 완벽하게 맞춤
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     try {
-      // 💡 로컬 주소 대신 종환님의 Render 백엔드 주소로 데이터를 보냅니다!
-      const response = await axios.post('https://jongz-c-o-r-e.hf.space/api/triage/predict', formData);
-      const newResult = response.data.data;
+      // 백엔드 main.py의 PatientData 클래스와 1:1 매칭
+      const requestData = {
+        age: Number(formData.age),
+        gender: Number(formData.gender),
+        arrival_mode: Number(formData.arrival_mode),
+        pain: Number(formData.pain_score), // pain_score -> pain
+        systolic: Number(formData.sbp),    // sbp -> systolic
+        diastolic: Number(formData.dbp),   // dbp -> diastolic
+        temperature: Number(formData.temperature),
+        heart_rate: Number(formData.heart_rate),
+        resp_rate: Number(formData.resp_rate),
+        spo2: Number(formData.o2sat),      // o2sat -> spo2
+        chief_complaint: formData.chief_complaint
+      };
 
-      // ✅ 제미나이 브리핑(ai_briefing)이 추가되었습니다.
+      const response = await axios.post('https://jongz-c-o-r-e.hf.space/api/triage/predict', requestData);
+      
+      // 백엔드 응답 구조에 맞게 데이터 추출 (ktas_level, opinion)
+      const result = response.data;
+
       const newPatientRecord = {
-        id: newResult.patient_id, name: newResult.patient_name, cc: formData.chief_complaint,
-        age: formData.age, spo2: formData.o2sat, sbp: formData.sbp,
-        level: newResult.predicted_level, score: newResult.risk_score, time: newResult.timestamp,
-        warnings: newResult.warnings, xai_data: newResult.xai_data, 
-        ai_briefing: newResult.ai_briefing, // 👈 추가된 부분
-        isActive: true
+        id: `P-${Math.floor(Math.random() * 9000) + 1000}`, 
+        name: formData.patient_name, 
+        cc: formData.chief_complaint,
+        age: formData.age, 
+        spo2: formData.o2sat, 
+        sbp: formData.sbp,
+        level: result.ktas_level, // 백엔드 필드명: ktas_level
+        score: 100 - (result.ktas_level * 15), // 임시 점수 계산
+        time: new Date().toLocaleString(),
+        warnings: formData.o2sat < 95 ? ["저산소증 주의"] : [],
+        ai_briefing: result.opinion, // 백엔드 필드명: opinion
+        isActive: true,
+        xai_data: [
+            {name: "심박수", value: formData.heart_rate / 100},
+            {name: "혈압", value: formData.sbp / 150}
+        ]
       };
       
       const updatedHistory = [newPatientRecord, ...patientHistory];
       setPatientHistory(updatedHistory);
       localStorage.setItem('coreTriageHistory', JSON.stringify(updatedHistory));
       setSelectedPatient(newPatientRecord);
+      alert("AI 분석이 완료되었습니다!");
     } catch (error) { 
-      alert("백엔드 서버와 연결할 수 없습니다. 서버가 켜져 있는지 확인해주세요."); 
-      console.error(error); 
+      console.error("422 or Connection Error Details:", error.response?.data);
+      alert(`분석 실패: ${error.response?.data?.detail?.[0]?.msg || "데이터 형식을 확인해주세요."}`); 
     }
     setLoading(false);
   };
@@ -328,7 +365,7 @@ function App() {
               </div>
             </div>
 
-            {/* [3컬럼] AI 브리핑 및 XAI 리포트 (Fairness 제거됨) */}
+            {/* [3컬럼] AI 브리핑 및 XAI 리포트 */}
             <div className="analytics-column">
               <div className="dashboard-card xai-card" style={{display: 'flex', flexDirection: 'column', height: '100%'}}>
                 <div className="card-title-group" style={{marginBottom: '10px', paddingBottom: '5px'}}>
@@ -341,7 +378,7 @@ function App() {
                       선택된 환자: {maskName(selectedPatient.name)} (ID.{selectedPatient.id})
                     </div>
 
-                    {/* 🤖 1. 제미나이 자연어 브리핑 영역 (필수!) */}
+                    {/* 🤖 1. 제미나이 자연어 브리핑 영역 */}
                     <div style={{ backgroundColor: '#F0F9FF', border: '1px solid #BAE6FD', padding: '15px', borderRadius: '10px', marginBottom: '15px' }}>
                         <div style={{ fontSize: '0.8rem', color: '#0369A1', fontWeight: 800, marginBottom: '5px' }}>👨‍⚕️ AI 비서 종합 소견:</div>
                         <div style={{ fontSize: '0.95rem', color: '#0C4A6E', lineHeight: '1.6', fontWeight: 600 }}>
@@ -387,7 +424,6 @@ function App() {
                   </div>
                 )}
               </div>
-              {/* Fairness Audit 영역은 완전히 제거되었습니다! */}
             </div>
           </div>
         )}
