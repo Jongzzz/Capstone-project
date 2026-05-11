@@ -11,15 +11,14 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime
 
-# 1. 환경 변수 로드 및 제미나이 설정
+# 1. 환경 변수 로드
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
-ai_model = genai.GenerativeModel('gemini-2.0-flash') # 최신 모델명으로 유지
+ai_model = genai.GenerativeModel('gemini-2.0-flash')
 
 app = FastAPI()
 
-# CORS 설정
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,40 +27,50 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 2. 파이토치 모델 뼈대 구축 (CORE_6.pth 에러 로그 기반 완벽 수정)
+# 2. 파이토치 모델 뼈대 구축
 class CustomModel(nn.Module):
     def __init__(self, input_dim=27, output_dim=5):
         super(CustomModel, self).__init__()
-        # 에러 로그 분석: network.0(Linear), network.1(ReLU - 파라미터 없음), network.2(Linear)
         self.network = nn.Sequential(
-            nn.Linear(input_dim, 64),   # network.0
-            nn.ReLU(),                  # network.1
-            nn.Linear(64, output_dim)   # network.2
+            nn.Linear(input_dim, 64),
+            nn.ReLU(),
+            nn.Linear(64, output_dim)
         )
 
     def forward(self, x):
         return self.network(x)
 
-# 3. 모델 가중치(.pth) 및 전처리기(.pkl) 로드
+# ==========================================
+# 🌟 [핵심 해결책] Render 타임아웃 방지 로직 🌟
+# 전역 변수로 껍데기만 먼저 만들어 둡니다.
+# ==========================================
 device = torch.device("cpu")
-pytorch_model = CustomModel(input_dim=27, output_dim=5)
+pytorch_model = None
+preprocessor = None
 
-try:
-    # CORE_6.pth 로드 시 map_location 필수
-    state_dict = torch.load('CORE_6.pth', map_location=device)
-    pytorch_model.load_state_dict(state_dict)
-    pytorch_model.eval()
-    print("✅ AI 모델(CORE_6.pth) 조립 완료!")
-except Exception as e:
-    print(f"❌ 모델 로드 실패: {e}")
+@app.on_event("startup")
+async def load_heavy_models():
+    """서버 문(포트)을 먼저 열고 나서 무거운 파일들을 백그라운드로 로딩합니다."""
+    global pytorch_model, preprocessor
+    print("🚪 1단계: 서버 포트 연결 성공! (Render가 안심함)")
+    print("🧠 2단계: 무거운 AI 모델과 150MB 파일 로딩을 시작합니다...")
+    
+    pytorch_model = CustomModel(input_dim=27, output_dim=5)
+    try:
+        state_dict = torch.load('CORE_6.pth', map_location=device)
+        pytorch_model.load_state_dict(state_dict)
+        pytorch_model.eval()
+        print("✅ AI 모델(CORE_6.pth) 로드 완료!")
+    except Exception as e:
+        print(f"❌ 모델 로드 실패: {e}")
 
-try:
-    # 150MB pkl 파일 로드
-    preprocessor = joblib.load('best_xgboost_model.pkl') 
-    print("✅ 전처리기(best_xgboost_model.pkl) 로드 성공!")
-except Exception as e:
-    print(f"⚠️ pkl 로드 실패: {e}")
-    preprocessor = None
+    try:
+        preprocessor = joblib.load('best_xgboost_model.pkl') 
+        print("✅ 전처리기(150MB pkl) 로드 완료!")
+    except Exception as e:
+        print(f"⚠️ pkl 로드 실패: {e}")
+
+# ==========================================
 
 # 프론트엔드 입력 규격
 class TriageInput(BaseModel):
@@ -76,7 +85,6 @@ class TriageInput(BaseModel):
     dbp: int
     pain_score: int
 
-# 주증상 매핑
 cc_mapping = {
     '흉통/심장질환': 'Cardiovascular',
     '호흡곤란': 'Respiratory',
@@ -87,7 +95,6 @@ cc_mapping = {
     '기타': 'General_Other'
 }
 
-# 27개 피처 순서
 FEATURE_COLUMNS = [
     'sbp', 'dbp', 'heartrate', 'resprate', 'temperature', 'o2sat',
     'anchor_age', 'gender', 'race_group', 'sbp_missing', 'dbp_missing',
@@ -100,7 +107,10 @@ FEATURE_COLUMNS = [
 
 @app.post("/api/triage/predict")
 async def predict_triage(data: TriageInput):
-    # 1. 데이터 27개로 변환
+    # 아직 모델 로딩이 안 끝났는데 프론트에서 요청이 올 경우 방어
+    if pytorch_model is None or preprocessor is None:
+        return {"status": "error", "message": "AI 모델이 아직 깨어나는 중입니다. 1분 뒤에 다시 시도해주세요."}
+
     input_dict = {col: 0.0 for col in FEATURE_COLUMNS}
     input_dict['sbp'] = data.sbp
     input_dict['dbp'] = data.dbp
@@ -118,7 +128,6 @@ async def predict_triage(data: TriageInput):
 
     input_df = pd.DataFrame([input_dict])
     
-    # 2. 전처리(pkl) 적용
     if preprocessor:
         try:
             processed_array = preprocessor.transform(input_df)
@@ -127,7 +136,6 @@ async def predict_triage(data: TriageInput):
     else:
         processed_array = input_df.values
 
-    # 3. AI 모델 추론
     input_tensor = torch.tensor(processed_array, dtype=torch.float32).to(device)
     with torch.no_grad():
         model_output = pytorch_model(input_tensor)
@@ -136,7 +144,6 @@ async def predict_triage(data: TriageInput):
     final_level = predicted_idx + 1 
     risk_score = 100 - (predicted_idx * 20) + np.random.randint(-5, 5)
 
-    # 4. 제미나이 브리핑
     prompt = f"""
     환자 정보: {data.age}세, 주증상: {data.chief_complaint}
     Vitals: 혈압 {data.sbp}/{data.dbp}, 맥박 {data.heart_rate}, 호흡 {data.resp_rate}, 체온 {data.temperature}, SpO2 {data.o2sat}%
@@ -158,6 +165,7 @@ async def predict_triage(data: TriageInput):
             "risk_score": max(1, min(99, risk_score)),
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "ai_briefing": ai_briefing,
+            "warnings": ["생체 징후 모니터링이 필요합니다."],
             "xai_data": [
                 {"name": "Age", "value": data.age * 0.1},
                 {"name": "Vital_Stability", "value": 5 - predicted_idx}
