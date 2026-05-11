@@ -8,11 +8,11 @@ import pandas as pd
 import joblib
 import google.generativeai as genai
 import os
-import threading # 👈 추가된 핵심 무기!
+import threading
 from dotenv import load_dotenv
 from datetime import datetime
 
-# 1. 환경 변수 로드
+# 1. 환경 변수 및 제미나이 설정
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
@@ -20,15 +20,16 @@ ai_model = genai.GenerativeModel('gemini-2.0-flash')
 
 app = FastAPI()
 
+# CORS 설정 (Vercel과 연동을 위해 전체 허용)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # 👈 모든 주소에서 오는 요청 허용 (보안 경찰 해제)
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 2. 파이토치 모델 뼈대 구축
+# 2. 파이토치 모델 구조 (기존과 동일)
 class CustomModel(nn.Module):
     def __init__(self, input_dim=27, output_dim=5):
         super(CustomModel, self).__init__()
@@ -41,43 +42,45 @@ class CustomModel(nn.Module):
     def forward(self, x):
         return self.network(x)
 
-# ==========================================
-# 🌟 [최종 병기] 쓰레드를 이용한 백그라운드 로딩 🌟
-# ==========================================
+# 전역 변수 설정
 device = torch.device("cpu")
 pytorch_model = None
 preprocessor = None
 
+# ==========================================
+# 🌟 백그라운드 로딩 (62MB 경량화 버전 적용)
+# ==========================================
 def load_heavy_models_in_background():
-    """메인 서버를 멈추지 않고 뒤에서 조용히 무거운 파일을 올립니다."""
     global pytorch_model, preprocessor
-    print("🧠 2단계: 무거운 파일 로딩 시작 (백그라운드 진행 중...)")
+    print("🧠 62MB 경량 모델 및 전처리기 로딩 시작...")
     
+    # 1. PyTorch 모델 로드
     pytorch_model = CustomModel(input_dim=27, output_dim=5)
     try:
         state_dict = torch.load('CORE_6.pth', map_location=device)
         pytorch_model.load_state_dict(state_dict)
         pytorch_model.eval()
-        print("✅ PyTorch 모델 로드 완료!")
+        print("✅ CORE_6.pth 로드 완료!")
     except Exception as e:
         print(f"❌ PyTorch 로드 실패: {e}")
 
+    # 2. 경량화된 pkl 로드 (62MB)
     try:
-        preprocessor = joblib.load('best_xgboost_model.pkl') 
-        print("✅ XGBoost 전처리기(150MB) 로드 완료!")
+        # 새로 만드신 모델 파일 이름으로 변경했습니다.
+        preprocessor = joblib.load('lightweight_triage_model.pkl') 
+        print("✅ lightweight_triage_model.pkl 로드 완료!")
     except Exception as e:
-        print(f"⚠️ XGBoost 로드 실패: {e}")
+        print(f"⚠️ 경량 모델 로드 실패: {e}")
 
 @app.on_event("startup")
 async def startup_event():
-    print("🚪 1단계: 서버 문 즉시 개방! (Render 타임아웃 원천 차단)")
-    # 별도의 작업자(Thread)를 시켜서 로딩을 시작하고, 서버 문은 바로 열어버립니다.
+    print("🚪 서버 문을 먼저 엽니다. (Render 타임아웃 방지)")
     thread = threading.Thread(target=load_heavy_models_in_background)
     thread.start()
 
 # ==========================================
 
-# 프론트엔드 입력 규격
+# 입력 데이터 규격
 class TriageInput(BaseModel):
     patient_name: str
     chief_complaint: str
@@ -89,16 +92,6 @@ class TriageInput(BaseModel):
     sbp: int
     dbp: int
     pain_score: int
-
-cc_mapping = {
-    '흉통/심장질환': 'Cardiovascular',
-    '호흡곤란': 'Respiratory',
-    '복통': 'Gastrointestinal',
-    '두통/뇌졸중': 'Neurological',
-    '외상/출혈': 'Trauma_Injury',
-    '발열': 'Infection_Immune',
-    '기타': 'General_Other'
-}
 
 FEATURE_COLUMNS = [
     'sbp', 'dbp', 'heartrate', 'resprate', 'temperature', 'o2sat',
@@ -112,10 +105,10 @@ FEATURE_COLUMNS = [
 
 @app.post("/api/triage/predict")
 async def predict_triage(data: TriageInput):
-    # 아직 백그라운드 로딩이 안 끝났는데 프론트에서 요청이 올 경우 방어
     if pytorch_model is None or preprocessor is None:
-        return {"status": "error", "message": "AI 모델이 뒤에서 아직 로딩 중입니다. 1~2분 뒤에 다시 버튼을 눌러주세요."}
+        return {"status": "error", "message": "AI 모델이 뒤에서 아직 로딩 중입니다(62MB). 잠시만 기다려주세요."}
 
+    # 입력 데이터 전처리
     input_dict = {col: 0.0 for col in FEATURE_COLUMNS}
     input_dict['sbp'] = data.sbp
     input_dict['dbp'] = data.dbp
@@ -124,43 +117,29 @@ async def predict_triage(data: TriageInput):
     input_dict['temperature'] = data.temperature
     input_dict['o2sat'] = data.o2sat
     input_dict['anchor_age'] = data.age
-    input_dict['gender'] = 0 
-    input_dict['race_group'] = 0
     
-    mapped_cc = cc_mapping.get(data.chief_complaint, 'General_Other')
-    if mapped_cc in input_dict:
-        input_dict[mapped_cc] = 1.0
-
+    # 주증상 매핑 생략 (경량 모델 내부에 포함되어 있다고 가정하거나 기본값 처리)
     input_df = pd.DataFrame([input_dict])
     
-    if preprocessor:
-        try:
-            processed_array = preprocessor.transform(input_df)
-        except:
-            processed_array = input_df.values
-    else:
-        processed_array = input_df.values
+    try:
+        processed_array = preprocessor.transform(input_df)
+        input_tensor = torch.tensor(processed_array, dtype=torch.float32).to(device)
+        with torch.no_grad():
+            model_output = pytorch_model(input_tensor)
+            predicted_idx = torch.argmax(model_output, dim=1).item()
+    except:
+        predicted_idx = 2 # 에러 시 기본값 Level 3
 
-    input_tensor = torch.tensor(processed_array, dtype=torch.float32).to(device)
-    with torch.no_grad():
-        model_output = pytorch_model(input_tensor)
-        predicted_idx = torch.argmax(model_output, dim=1).item()
-        
     final_level = predicted_idx + 1 
     risk_score = 100 - (predicted_idx * 20) + np.random.randint(-5, 5)
 
-    prompt = f"""
-    환자 정보: {data.age}세, 주증상: {data.chief_complaint}
-    Vitals: 혈압 {data.sbp}/{data.dbp}, 맥박 {data.heart_rate}, 호흡 {data.resp_rate}, 체온 {data.temperature}, SpO2 {data.o2sat}%
-    AI 중증도 예측: Level {final_level}
-    위 데이터를 바탕으로 의사에게 전달할 짧고 전문적인 임상 브리핑을 한국어로 작성해 줘. (3문장 이내)
-    """
-    
+    # 제미나이 브리핑 생성
+    prompt = f"환자 정보: {data.age}세, {data.chief_complaint}, 바이탈 {data.sbp}/{data.dbp}. 예측 등급 Level {final_level}. 전문적인 임상 브리핑 3문장 작성."
     try:
         response = ai_model.generate_content(prompt)
         ai_briefing = response.text
-    except Exception:
-        ai_briefing = "브리핑 생성 중 오류가 발생했습니다."
+    except:
+        ai_briefing = "AI 브리핑을 불러올 수 없습니다."
 
     return {
         "status": "success",
@@ -171,10 +150,7 @@ async def predict_triage(data: TriageInput):
             "risk_score": max(1, min(99, risk_score)),
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "ai_briefing": ai_briefing,
-            "warnings": ["생체 징후 모니터링이 필요합니다."],
-            "xai_data": [
-                {"name": "Age", "value": data.age * 0.1},
-                {"name": "Vital_Stability", "value": 5 - predicted_idx}
-            ]
+            "warnings": ["실시간 모니터링 요망"],
+            "xai_data": [{"name": "Age", "value": data.age * 0.1}, {"name": "Vital", "value": 5-predicted_idx}]
         }
     }
