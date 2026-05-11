@@ -22,14 +22,10 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://capstone-project-flax-iota.vercel.app", # Vercel 주소 추가
-        "http://localhost:3000",                        # 로컬 테스트용
-        "http://localhost:5173"                         # Vite 테스트용
-    ],
+    allow_origins=["*"], # 👈 모든 주소에서 오는 요청 허용 (보안 경찰 해제)
     allow_credentials=True,
-    allow_methods=["*"], # 모든 방식(POST, GET 등) 허용
-    allow_headers=["*"], # 모든 헤더 허용
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # 2. 파이토치 모델 뼈대 구축
