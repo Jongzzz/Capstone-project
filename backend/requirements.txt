@@ -1,10 +1,11 @@
+--find-links https://download.pytorch.org/whl/cpu/torch_stable.html
+torch==2.2.0+cpu
 fastapi
 uvicorn
-torch
+python-multipart
 numpy
 pandas
 joblib
-scikit-learn 
+scikit-learn
 google-generativeai
 python-dotenv
-python-multipart
