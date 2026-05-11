@@ -106,7 +106,7 @@ function App() {
     setLoading(true);
     try {
       // 💡 로컬 주소 대신 종환님의 Render 백엔드 주소로 데이터를 보냅니다!
-      const response = await axios.post('https://jongzzz-c-o-r-e.hf.space/api/triage/predict', formData);
+      const response = await axios.post('https://jongz-c-o-r-e.hf.space/api/triage/predict', formData);
       const newResult = response.data.data;
 
       // ✅ 제미나이 브리핑(ai_briefing)이 추가되었습니다.
