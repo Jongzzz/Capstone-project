@@ -160,6 +160,7 @@ async def predict_triage(data: TriageInput):
     return {
         "status": "success",
         "data": {
+            "patient_id": str(np.random.randint(1000, 9999)), # 👈 누락되었던 필수 데이터 추가 완료!
             "patient_name": data.patient_name,
             "predicted_level": final_level,
             "risk_score": max(1, min(99, risk_score)),
