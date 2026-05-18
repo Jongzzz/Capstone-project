@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
 import './App.css'
-import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ReferenceLine, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
+// BarChart 관련 컴포넌트는 삭제하고 통계용 PieChart 컴포넌트만 남겼습니다.
+import { Tooltip as RechartsTooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -122,11 +123,8 @@ function App() {
         time: new Date().toLocaleString(),
         warnings: formData.o2sat < 95 ? ["저산소증 주의"] : [],
         ai_briefing: result.opinion,
-        isActive: true,
-        xai_data: [
-          { name: "심박수", value: formData.heart_rate / 100 },
-          { name: "혈압", value: formData.sbp / 150 }
-        ]
+        shap_image: result.shap_image, // 🌟 백엔드에서 받은 SHAP 이미지 저장!
+        isActive: true
       };
 
       const updatedHistory = [newPatientRecord, ...patientHistory];
@@ -361,23 +359,25 @@ function App() {
                         {selectedPatient.ai_briefing || "브리핑을 생성하는 중입니다..."}
                       </div>
                     </div>
-                    {selectedPatient.xai_data ? (
-                      <div className="chart-container" style={{ flex: 1, minHeight: '140px' }}>
-                        <ResponsiveContainer width="100%" height={160}>
-                          <BarChart data={selectedPatient.xai_data} layout="vertical" margin={{ top: 0, right: 20, left: 10, bottom: 0 }}>
-                            <XAxis type="number" hide />
-                            <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} style={{ fontSize: '0.75rem', fontWeight: 'bold' }} width={40} />
-                            <RechartsTooltip cursor={{ fill: 'transparent' }} contentStyle={{ fontSize: '0.8rem', padding: '5px', borderRadius: '8px' }} />
-                            <ReferenceLine x={0} stroke="#CBD5E1" />
-                            <Bar dataKey="value" barSize={16} radius={[0, 4, 4, 0]}>
-                              {selectedPatient.xai_data.map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={entry.value > 0 ? '#EF4444' : '#10B981'} />
-                              ))}
-                            </Bar>
-                          </BarChart>
-                        </ResponsiveContainer>
+                    
+                    {/* 🌟 기존 BarChart 영역을 지우고 SHAP 이미지 표시 영역으로 교체했습니다! */}
+                    {selectedPatient.shap_image ? (
+                      <div className="chart-container" style={{ flex: 1, marginTop: '10px', textAlign: 'center' }}>
+                        <p style={{ fontWeight: "bold", fontSize: "0.85rem", color: "#1E293B", marginBottom: "10px" }}>
+                          📊 AI 판단 중요도 근거 (SHAP Value)
+                        </p>
+                        <img 
+                          src={`data:image/png;base64,${selectedPatient.shap_image}`} 
+                          alt="SHAP 분석 차트" 
+                          style={{ width: "100%", borderRadius: "8px", border: "1px solid #E2E8F0" }}
+                        />
                       </div>
-                    ) : (<div style={{ margin: 'auto', color: '#94A3B8', fontSize: '0.8rem' }}>XAI 데이터 없음</div>)}
+                    ) : (
+                      <div style={{ margin: 'auto', color: '#94A3B8', fontSize: '0.8rem' }}>
+                        XAI 이미지 생성 중이거나 데이터가 없습니다.
+                      </div>
+                    )}
+
                     {selectedPatient.warnings && selectedPatient.warnings.length > 0 && (
                       <div style={{ marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto', maxHeight: '130px', paddingRight: '5px' }}>
                         <div style={{ fontSize: '0.75rem', color: '#64748B', fontWeight: 700 }}>추가 감지 알림:</div>
