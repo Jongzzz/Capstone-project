@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
 import './App.css'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ReferenceLine, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ReferenceLine, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -17,17 +17,14 @@ function App() {
     return savedUsers ? JSON.parse(savedUsers) : [];
   });
 
-  const handleAuthChange = (e) => {
-    setAuthData({ ...authData, [e.target.name]: e.target.value });
-  };
+  const handleAuthChange = (e) => setAuthData({ ...authData, [e.target.name]: e.target.value });
 
   const handleSignup = (e) => {
     e.preventDefault();
     const MASTER_CODE = "CORE-2026";
-    if (authData.accessCode !== MASTER_CODE) return alert("원내 인가 코드가 일치하지 않습니다. 관리자에게 문의하세요.");
+    if (authData.accessCode !== MASTER_CODE) return alert("원내 인가 코드가 일치하지 않습니다.");
     if (authData.password !== authData.confirmPassword) return alert("비밀번호가 일치하지 않습니다.");
     if (usersDB.find(u => u.licenseNumber === authData.licenseNumber)) return alert("이미 등록된 면허/사번입니다.");
-
     const newUser = { role: authData.role, name: authData.name, licenseNumber: authData.licenseNumber, password: authData.password };
     const updatedDB = [...usersDB, newUser];
     setUsersDB(updatedDB);
@@ -66,23 +63,13 @@ function App() {
   });
 
   const [formData, setFormData] = useState({
-    patient_name: '',
-    chief_complaint: '흉통/심장질환',
-    age: 70,
-    gender: 1,
-    arrival_mode: 1,
-    temperature: 36.5,
-    heart_rate: 80,
-    resp_rate: 20,
-    o2sat: 98,
-    sbp: 120,
-    dbp: 80,
-    pain_score: 5
+    patient_name: '', chief_complaint: '흉통/심장질환', age: 70, gender: 1,
+    arrival_mode: 1, temperature: 36.5, heart_rate: 80, resp_rate: 20,
+    o2sat: 98, sbp: 120, dbp: 80, pain_score: 5
   });
 
   const [selectedPatient, setSelectedPatient] = useState(null);
   const [loading, setLoading] = useState(false);
-
   const complaintOptions = ['흉통/심장질환', '호흡곤란', '복통', '두통/뇌졸중', '외상/출혈', '발열', '기타'];
 
   const maskName = (name) => {
@@ -100,7 +87,7 @@ function App() {
     }
   };
 
-  const handleComplaintSelect = (option) => { setFormData({ ...formData, chief_complaint: option }); };
+  const handleComplaintSelect = (option) => setFormData({ ...formData, chief_complaint: option });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -132,7 +119,6 @@ function App() {
         spo2: formData.o2sat,
         sbp: formData.sbp,
         level: result.ktas_level,
-        score: 100 - (result.ktas_level * 15),
         time: new Date().toLocaleString(),
         warnings: formData.o2sat < 95 ? ["저산소증 주의"] : [],
         ai_briefing: result.opinion,
@@ -163,14 +149,26 @@ function App() {
     if (selectedPatient && selectedPatient.id === id) setSelectedPatient(null);
   };
 
+  const handleClearHistory = () => {
+    if (window.confirm("모든 환자 기록을 삭제하시겠습니까?")) {
+      setPatientHistory([]);
+      setSelectedPatient(null);
+      localStorage.removeItem('coreTriageHistory');
+    }
+  };
+
   const handleExportCSV = () => {
     if (patientHistory.length === 0) return alert("추출할 데이터가 없습니다.");
     const BOM = '\uFEFF';
-    const headers = ['환자번호', '성명', '주증상', '나이', '성별', 'SpO2(%)', '수축기혈압(mmHg)', '예측등급(Level)', '위험도점수', '분석일시', '상태'];
+    const headers = ['환자번호', '성명', '주증상', '나이', '성별', 'SpO2(%)', '수축기혈압(mmHg)', '예측등급(Level)', '분석일시', '상태'];
     const csvRows = [headers.join(',')];
-    patientHistory.forEach(p => csvRows.push([p.id, p.name, p.cc, p.age, p.gender === 1 ? '남' : '여', p.spo2, p.sbp, p.level, p.score, p.time, p.isActive ? '대기중' : '진료완료'].join(',')));
+    patientHistory.forEach(p => csvRows.push([
+      p.id, p.name, p.cc, p.age, p.gender === 1 ? '남' : '여',
+      p.spo2, p.sbp, p.level, p.time, p.isActive ? '대기중' : '진료완료'
+    ].join(',')));
     const blob = new Blob([BOM + csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement("a"); link.href = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
     link.setAttribute("download", `CDSS_Triage_${new Date().getTime()}.csv`);
     document.body.appendChild(link); link.click(); document.body.removeChild(link);
   };
@@ -192,7 +190,7 @@ function App() {
     if (level === 3) return 'level-3'; if (level === 4) return 'level-4'; return 'level-5';
   };
 
-  const activeQueue = patientHistory.filter(p => p.isActive).sort((a, b) => b.score - a.score);
+  const activeQueue = patientHistory.filter(p => p.isActive).sort((a, b) => a.level - b.level);
 
   if (!isLoggedIn) {
     return (
@@ -201,7 +199,6 @@ function App() {
           <div className="auth-logo">🏥</div>
           <h1 className="auth-title">C.O.R.E CDSS</h1>
           <p className="auth-subtitle">의료진 전용 시스템입니다. 인증 후 접속해주세요.</p>
-
           {authMode === 'login' ? (
             <form className="auth-form" onSubmit={handleLogin}>
               <div className="form-group">
@@ -270,12 +267,10 @@ function App() {
             <div className="dashboard-card">
               <div className="card-title-group"><div className="card-title">🩺 Patient Profile</div></div>
               <form onSubmit={handleSubmit} className="triage-form" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-
                 <div className="form-group">
                   <label className="form-label">환자 성명</label>
                   <input type="text" name="patient_name" value={formData.patient_name} onChange={handleChange} className="form-input" required />
                 </div>
-
                 <div className="form-group">
                   <label className="form-label">주증상 (C.C)</label>
                   <div className="chief-complaint-selector">
@@ -284,8 +279,6 @@ function App() {
                     ))}
                   </div>
                 </div>
-
-                {/* 성별 추가 */}
                 <div className="form-group">
                   <label className="form-label">성별</label>
                   <div className="chief-complaint-selector">
@@ -293,25 +286,21 @@ function App() {
                     <button type="button" className={`complaint-chip ${formData.gender === 0 ? 'active' : ''}`} onClick={() => setFormData({ ...formData, gender: 0 })}>👩 여성</button>
                   </div>
                 </div>
-
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginTop: '5px' }}>
                   <div className="form-group"><label className="form-label">나이</label><input type="number" name="age" min="18" max="85" value={formData.age} onChange={handleChange} className="form-input" required /></div>
                   <div className="form-group"><label className="form-label">체온(℃)</label><input type="number" name="temperature" min="30" max="45" step="0.1" value={formData.temperature} onChange={handleChange} className="form-input" required /></div>
                   <div className="form-group"><label className="form-label">SpO2(%)</label><input type="number" name="o2sat" min="50" max="120" value={formData.o2sat} onChange={handleChange} className="form-input" required /></div>
                 </div>
-
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '5px' }}>
                   <div className="form-group"><label className="form-label">수축기 혈압(SBP)</label><input type="number" name="sbp" min="50" max="260" value={formData.sbp} onChange={handleChange} className="form-input" required /></div>
                   <div className="form-group"><label className="form-label">이완기 혈압(DBP)</label><input type="number" name="dbp" min="0" max="200" value={formData.dbp} onChange={handleChange} className="form-input" required /></div>
                   <div className="form-group"><label className="form-label">심박수(HR)</label><input type="number" name="heart_rate" min="25" max="225" value={formData.heart_rate} onChange={handleChange} className="form-input" required /></div>
                   <div className="form-group"><label className="form-label">호흡수(RR)</label><input type="number" name="resp_rate" min="7" max="40" value={formData.resp_rate} onChange={handleChange} className="form-input" required /></div>
                 </div>
-
                 <div className="form-group" style={{ marginTop: '5px' }}>
                   <label className="form-label">통증 점수 (NRS 0-10): <span style={{ color: '#2563EB', fontWeight: 'bold' }}>{formData.pain_score}점</span></label>
                   <input type="range" name="pain_score" min="0" max="10" value={formData.pain_score} onChange={handleChange} style={{ width: '100%', cursor: 'pointer', accentColor: '#2563EB' }} />
                 </div>
-
                 <button type="submit" disabled={loading} className="form-submit-button" style={{ marginTop: 'auto' }}>
                   {loading ? '분석 중...' : '🚀 AI Triage 가동'}
                 </button>
@@ -319,7 +308,9 @@ function App() {
             </div>
 
             <div className="dashboard-card" style={{ padding: '10px' }}>
-              <div className="card-title-group" style={{ padding: '5px 10px', marginBottom: '10px' }}><div className="card-title">📊 실시간 Triage 대기열</div></div>
+              <div className="card-title-group" style={{ padding: '5px 10px', marginBottom: '10px' }}>
+                <div className="card-title">📊 실시간 Triage 대기열</div>
+              </div>
               <div style={{ overflowY: 'auto', flex: 1, padding: '5px' }}>
                 {activeQueue.length > 0 ? activeQueue.map((p) => {
                   const isSelected = selectedPatient?.id === p.id;
@@ -338,7 +329,6 @@ function App() {
                         <div style={{ fontWeight: '800', fontSize: '1.1rem', color: '#1E293B' }}>
                           {maskName(p.name)} <span style={{ fontSize: '0.8rem', fontWeight: 'normal', color: '#64748B' }}>({p.age}세 / {p.gender === 1 ? '남' : '여'})</span>
                         </div>
-                        <div style={{ fontSize: '0.85rem', color: '#DC2626', fontWeight: 600, marginTop: '4px' }}>종합 점수: {p.score}점</div>
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
                         <div className={`level-badge ${getLevelClass(p.level)}`} style={{ padding: '6px 14px', fontSize: '1.2rem' }}>Lv.{p.level}</div>
@@ -360,20 +350,17 @@ function App() {
                 <div className="card-title-group" style={{ marginBottom: '10px', paddingBottom: '5px' }}>
                   <div className="card-title">🦾 AI 임상 판단 및 소견</div>
                 </div>
-
                 {selectedPatient ? (
                   <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                     <div style={{ fontSize: '0.85rem', color: '#1E293B', fontWeight: 600, marginBottom: '10px' }}>
                       선택된 환자: {maskName(selectedPatient.name)} (ID.{selectedPatient.id})
                     </div>
-
                     <div style={{ backgroundColor: '#F0F9FF', border: '1px solid #BAE6FD', padding: '15px', borderRadius: '10px', marginBottom: '15px' }}>
                       <div style={{ fontSize: '0.8rem', color: '#0369A1', fontWeight: 800, marginBottom: '5px' }}>👨‍⚕️ AI 비서 종합 소견:</div>
                       <div style={{ fontSize: '0.95rem', color: '#0C4A6E', lineHeight: '1.6', fontWeight: 600 }}>
                         {selectedPatient.ai_briefing || "브리핑을 생성하는 중입니다..."}
                       </div>
                     </div>
-
                     {selectedPatient.xai_data ? (
                       <div className="chart-container" style={{ flex: 1, minHeight: '140px' }}>
                         <ResponsiveContainer width="100%" height={160}>
@@ -391,7 +378,6 @@ function App() {
                         </ResponsiveContainer>
                       </div>
                     ) : (<div style={{ margin: 'auto', color: '#94A3B8', fontSize: '0.8rem' }}>XAI 데이터 없음</div>)}
-
                     {selectedPatient.warnings && selectedPatient.warnings.length > 0 && (
                       <div style={{ marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto', maxHeight: '130px', paddingRight: '5px' }}>
                         <div style={{ fontSize: '0.75rem', color: '#64748B', fontWeight: 700 }}>추가 감지 알림:</div>
@@ -418,15 +404,21 @@ function App() {
           <div className="dashboard-card">
             <div className="card-title-group">
               <div className="card-title">👥 누적 환자 명단 (전체 기록)</div>
-              <button onClick={handleExportCSV} style={{ padding: '6px 12px', backgroundColor: '#10B981', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.9rem' }}>💾 CSV 추출</button>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={handleExportCSV} style={{ padding: '6px 12px', backgroundColor: '#10B981', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.9rem' }}>💾 CSV 추출</button>
+                <button onClick={handleClearHistory} style={{ padding: '6px 12px', backgroundColor: '#EF4444', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.9rem' }}>🗑️ 초기화</button>
+              </div>
             </div>
             <div style={{ overflowY: 'auto', flex: 1 }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>
                 <thead style={{ position: 'sticky', top: 0, backgroundColor: '#F8FAFC', zIndex: 1 }}>
                   <tr style={{ borderBottom: '2px solid #E2E8F0', color: '#64748B' }}>
-                    <th style={{ padding: '10px' }}>상태</th><th style={{ padding: '10px' }}>ID</th>
-                    <th style={{ padding: '10px' }}>성명</th><th style={{ padding: '10px' }}>나이</th>
-                    <th style={{ padding: '10px' }}>성별</th><th style={{ padding: '10px' }}>SpO2</th>
+                    <th style={{ padding: '10px' }}>상태</th>
+                    <th style={{ padding: '10px' }}>ID</th>
+                    <th style={{ padding: '10px' }}>성명</th>
+                    <th style={{ padding: '10px' }}>나이</th>
+                    <th style={{ padding: '10px' }}>성별</th>
+                    <th style={{ padding: '10px' }}>SpO2</th>
                     <th style={{ padding: '10px' }}>예측 등급</th>
                   </tr>
                 </thead>
