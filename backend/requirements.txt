@@ -1,7 +1,10 @@
 fastapi
 uvicorn
-torch --index-url https://download.pytorch.org/whl/cpu
-numpy
 joblib
-google-generativeai
+pandas
+torch
+xgboost
 python-dotenv
+google-genai
+shap
+matplotlib
